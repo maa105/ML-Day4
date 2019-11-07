@@ -12,35 +12,71 @@ from keras_adversarial import AdversarialOptimizerSimultaneous, normal_latent_sa
 from image_utils import dim_ordering_fix, dim_ordering_input, dim_ordering_reshape, dim_ordering_unfix
 
 def gan_targets(n):
-    """
-    Standard training targets [generator_fake, generator_real, discriminator_fake,
-    discriminator_real] = [1, 0, 0, 1]
-    :param n: number of samples
-    :return: array of targets
-    """
-    generator_fake = np.ones((n, 1))
-    generator_real = np.zeros((n, 1))
-    discriminator_fake = np.zeros((n, 1))
-    discriminator_real = np.ones((n, 1))
-    return [generator_fake, generator_real, discriminator_fake, discriminator_real]
+  """
+  Standard training targets [generator_fake, generator_real, discriminator_fake,
+  discriminator_real] = [1, 0, 0, 1]
+  :param n: number of samples
+  :return: array of targets
+  """
+  generator_fake = np.ones((n, 1))
+  generator_real = np.zeros((n, 1))
+  discriminator_fake = np.zeros((n, 1))
+  discriminator_real = np.ones((n, 1))
+  return [generator_fake, generator_real, discriminator_fake, discriminator_real]
 
 def model_generator():
-    nch = 256
-    
-    return Model(g_input, g_V)
+  nch = 256
+  g_input = Input(shape=[100])
+
+  H = Dense(256*14*14, init='glorot_normal')(g_input)
+  H = BatchNormalization()(H)
+  H = Activation('relu')(H)
+
+  H = dim_ordering_reshape(256,14)
+  H = UpSampling2D(size=(2,2))(H)
+
+  H = Conv2D(128, 3, 3, border_mode='same', init='glorot_normal')(H)
+  H = BatchNormalization(axis=1)(H)
+  H = Activation('relu')(H)
+  
+  H = Conv2D(64, 3, 3, border_mode='same', init='glorot_normal')(H)
+  H = BatchNormalization(axis=1)(H)
+  H = Activation('relu')(H)
+  
+  H = Conv2D(1, 1, 1, border_mode='same', init='glorot_normal')(H)
+  g_V = Activation('sigmoid')(H)
+
+  return Model(g_input, g_V)
 
 def model_discriminator(input_shape=(1, 28, 28), dropout_rate=0.5):
-    d_input = dim_ordering_input(input_shape, name="input_x")
-    nch = 512
-    
-    return Model(d_input, d_V)
+  d_input = dim_ordering_input(input_shape, name="input_x")
+
+  nch = 512
+
+  H = Conv2D(256, 5, 5, subsample=(2,2), border_mode='same')(d_input)
+  H = LeakyReLU(0.2)(H)
+  H = Dropout(dropout_rate)(H)
+
+  H = Conv2D(512, 5, 5, subsample=(2,2), border_mode='same')(H)
+  H = LeakyReLU(0.2)(H)
+  H = Dropout(dropout_rate)(H)
+
+  H = Flatten()(H)
+
+  H = Dense(256)(H)
+  H = LeakyReLU(0.2)(H)
+  H = Dropout(dropout_rate)(H)
+
+  d_V = Dense(1, activation='sigmoid')(H)
+
+  return Model(d_input, d_V)
 
 def mnist_process(x):
-    x = x.astype(np.float32) / 255.0
-    return x
+  x = x.astype(np.float32) / 255.0
+  return x
 def mnist_data():
-    (xtrain, ytrain), (xtest, ytest) = mnist.load_data()
-    return mnist_process(xtrain), mnist_process(xtest)
+  (xtrain, ytrain), (xtest, ytest) = mnist.load_data()
+  return mnist_process(xtrain), mnist_process(xtest)
 
 
 # z in R^100
@@ -60,9 +96,11 @@ gan.summary()
 
 # build adversarial model
 model = AdversarialModel(base_model=gan, player_params=[generator.trainable_weights, discriminator.trainable_weights])
-model.adversarial_compile(adversarial_optimizer=AdversarialOptimizerSimultaneous(),
-player_optimizers=[Adam(1e-4, decay=1e-4), Adam(1e-3, decay=1e-4)],
-loss='binary_crossentropy')
+model.adversarial_compile(
+  adversarial_optimizer=AdversarialOptimizerSimultaneous(),
+  player_optimizers=[Adam(1e-4, decay=1e-4), Adam(1e-3, decay=1e-4)],
+  loss='binary_crossentropy'
+)
 
 def generator_sampler():
     zsamples = np.random.normal(size=(10 * 10, latent_dim))
@@ -70,15 +108,20 @@ def generator_sampler():
     return gen.reshape((10, 10, 28, 28))
 
 generator_cb = ImageGridCallback(
-"output/gan_convolutional/epoch-{:03d}.png",generator_sampler)
+  "output/gan_convolutional/epoch-{:03d}.png",
+  generator_sampler
+)
 xtrain, xtest = mnist_data()
 xtrain = dim_ordering_fix(xtrain.reshape((-1, 1, 28, 28)))
 xtest = dim_ordering_fix(xtest.reshape((-1, 1, 28, 28)))
 y = gan_targets(xtrain.shape[0])
 ytest = gan_targets(xtest.shape[0])
-history = model.fit(x=xtrain, y=y,
-validation_data=(xtest, ytest), callbacks=[generator_cb], nb_epoch=100,
-batch_size=32)
+
+history = model.fit(
+  x=xtrain, y=y,
+  validation_data=(xtest, ytest), callbacks=[generator_cb], nb_epoch=100,
+  batch_size=32
+)
 df = pd.DataFrame(history.history)
 df.to_csv("output/gan_convolutional/history.csv")
 generator.save("output/gan_convolutional/generator.h5")
